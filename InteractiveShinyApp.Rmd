@@ -1,0 +1,186 @@
+---
+title: "Interactive Application"
+author: "Aarushi Agarwal"
+date: "9/2/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, shiny,reshape, ggplot, ggmap,corrplot,ggplot2,matrixStats,sf,deplyr,tidyr,data.table,maps,htmltools,leaflet,caret, DMwr)
+#search()
+
+```
+
+```{r}
+housing.df <- read.csv(file="Housing_2020.csv", header=TRUE, sep=",")
+
+
+#Data Pre Process
+#Note: Not removing outliers because this is a shiny app to help user explore different kind of preperty, even the high priced ones
+housing.clean.df<-subset(housing.df,housing.df$PROPERTY.TYPE=="Single Family Residential" | housing.df$PROPERTY.TYPE=="Townhouse" )
+#removing  null values for year and  baths;total count =3
+housing.clean.df<-housing.clean.df[!is.na( housing.clean.df$YEAR.BUILT),]
+housing.clean.df<-housing.clean.df[!is.na( housing.clean.df$BATHS),]
+#lapply(housing.clean.df,function(x) { length(which(is.na(x)))})
+#replacing nulls with median for lot size as the mean would be biased because of outliers
+housing.clean.df$LOT.SIZE[is.na(housing.clean.df$LOT.SIZE)]<-median(housing.clean.df$LOT.SIZE)
+#lapply(housing.clean.df,function(x) { length(which(is.na(x)))})
+#summary(housing.clean.df)
+
+```
+
+
+
+```{r}
+
+# Adding a column for displaying as a label for maps
+housing.clean.df$label<-paste("Square Feet: ",housing.clean.df$SQUARE.FEET,"| Lot Size:  ", housing.clean.df$LOT.SIZE,"| Year Built: ", housing.clean.df$YEAR.BUILT)
+# tab2 dataframe created for generating data table for Tab2
+tab2<-aggregate(housing.clean.df$PRICE,list(housing.clean.df$ZIP.OR.POSTAL.CODE, housing.clean.df$PROPERTY.TYPE),median)
+tab2_wide<-spread(tab2, Group.2,x)
+names(tab2_wide)[names(tab2_wide)=="Group.1"]<-"ZIPCODE"
+tab2_ordered<-tab2_wide[with(tab2_wide,order(-tab2_wide$`Single Family Residential`)),]
+
+tab2_dt<-setDT(tab2_ordered, keep.rownames=FALSE)
+
+```
+
+
+Tab 1: A histogram that shows the distribution of home prices in a zip code.
+Include a drop-down input list that allows a user to choose one or multiple zip
+codes at a time. 
+```{r}
+
+
+ui <- fluidPage(
+  titlePanel("A histogram that shows the distribution of home prices in a zip code"),
+  selectInput(inputId = "zipcode",label = "Select Zipcode:",choices=housing.df$ZIP.OR.POSTAL.CODE, multiple = TRUE, selected = 75219 ),
+  
+  plotOutput(outputId = "hist")
+)
+server <- function(input, output, session) {
+
+      output$hist <- renderPlot({
+        prices.df<-subset(housing.df,housing.df$ZIP.OR.POSTAL.CODE==input$zipcode)
+       ggplot( prices.df, aes(x =PRICE) )+
+       geom_histogram( color = "purple", fill="pink")+ggtitle("Histogram of Price Distribution for selected Zipcodes")
+    
+})
+}
+shinyApp(ui = ui, server = server)
+
+```
+
+Tab2: A table that shows the median home price by zip code (row) and property
+type (column). Sort the table by descending order of “Single Family Residential”
+home price. 
+
+```{r}
+ui <- fluidPage(
+  titlePanel("Median Prices based on ZipCodes and Property Type"),
+  
+  
+  tableOutput(outputId = "table")
+)
+server <- function(input, output, session) {
+
+      output$table <- renderTable({
+      
+      
+      tab2_dt
+})
+}
+shinyApp(ui = ui, server = server)
+```
+Tab 3: A boxplot for a specific (number of) beds, (number of) baths, square feet,
+lot size, and year built combination. For each of the above features, include a
+slider input.
+
+```{r}
+ui <- fluidPage(
+  titlePanel("A boxplot for a specific (number of) beds, (number of) baths, square feet,
+lot size, and year built combination."),
+  sidebarLayout(
+    sidebarPanel(
+      
+
+       sliderInput(inputId = "beds",
+                   label = "Select no. of Beds:",
+                   min = 0, max = 8,
+                   value = 0),
+       sliderInput(inputId = "baths",
+                   label = "Select no. of Baths:",
+                   min = 1, max = 9,
+                   value = 1, step=0.5),
+       sliderInput(inputId = "sqFeet",
+                   label = "Select Square Feet:",
+                   min = 528, max = 27075,
+                   value = 528),
+       sliderInput(inputId = "lot",
+                   label = "Select Lot Size:",
+                   min = 44, max = 5227200,
+                   value = 44),
+       sliderInput(inputId = "year",
+                   label = "Select Year Built:",
+                   min = 1868, max = 2021,
+                   value = 1868),
+
+    ),
+    mainPanel(
+       
+       plotOutput(outputId = "boxplot")
+    )
+       
+  )
+     
+ )
+
+ 
+ server <- function(input, output) {
+
+   output$boxplot<-renderPlot ({ 
+     pricesBox.df<-subset(housing.clean.df,housing.clean.df$BEDS==input$beds | housing.clean.df$BATHS==input$baths |
+                            housing.clean.df$SQUARE.FEET ==input$sqFeet | housing.clean.df$LOT.SIZE==input$lot |
+                            housing.clean.df$YEAR.BUILT==input$year)
+    ggplot(pricesBox.df) +
+  geom_boxplot(aes(, y =PRICE), 
+               fill = "gold1", outlier.color = "firebrick2") + 
+  xlab("PRICE") + ylab("Values")+ggtitle("BoxPlot for Price")
+  
+   })
+ }
+
+ # Create a Shiny app object ----
+ shinyApp(ui = ui, server = server)
+
+
+```
+
+Tab 4: A map that shows the location of the home. When a user hovers over a
+particular property, s/he should be able to see basic information about the
+property, such as square feet, lot size, year built, etc.
+```{r}
+
+
+ui <- fluidPage(
+  titlePanel("A map that shows the locations of the home"),
+  leafletOutput("map")
+)
+server <- function(input, output) {
+  output$map<- renderLeaflet({
+leaflet(housing.clean.df) %>% addTiles() %>% addCircleMarkers( radius=0.5,color = ~"yellow", fill = TRUE, label = ~ label) 
+
+})
+}
+shinyApp(ui = ui, server = server)
+
+
+```
+
+
+
+
+
+
